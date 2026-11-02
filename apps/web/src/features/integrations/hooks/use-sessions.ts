@@ -194,6 +194,26 @@ export const connectSession = createServerFn({ method: "POST" })
     })
   )
 
+/**
+ * Pairing-code alternative to QR scanning. The engine's /pair endpoint
+ * uses a different WhatsApp-side code path than QR, so it is the fallback
+ * when QR scans repeatedly fail during the login handshake ("Masuk..."
+ * then "check your connection"). The socket must already be running:
+ * call this only after connectSession has started, i.e. from the QR
+ * dialog's connecting step. Returns the 8-digit code the user types into
+ * WhatsApp > Linked Devices > Link with phone number.
+ */
+export const requestPairingCode = createServerFn({ method: "POST" })
+  .validator((data: { sessionId: string; phone: string }) => data)
+  .handler(
+    withSafeErrors(async ({ data }) => {
+      return await callSessionWorker(data.sessionId, "/pair", {
+        method: "POST",
+        body: JSON.stringify({ phone: data.phone }),
+      })
+    })
+  )
+
 /** On-demand: pull one group's current member list and resolve every
  * participant into a CRM contact right now, regardless of whether the
  * session was connected with syncGroupMembers off. */

@@ -18,7 +18,8 @@ import {
   RefreshCwIcon,
 } from "lucide-react"
 import { toast } from "sonner"
-import { getSessionStatus, connectSession } from "../hooks/use-sessions"
+import { getSessionStatus, connectSession, requestPairingCode } from "../hooks/use-sessions"
+import { Input } from "@workspace/ui/components/input"
 import { useRealtimeEvent } from "@/features/realtime/hooks/use-realtime-event"
 
 export function QrConnectDialog({
@@ -56,6 +57,24 @@ export function QrConnectDialog({
   const [step, setStep] = useState<"options" | "connecting">("options")
   const [syncHistory, setSyncHistory] = useState(true)
   const [syncGroupMembers, setSyncGroupMembers] = useState(false)
+  const [showPair, setShowPair] = useState(false)
+  const [pairPhone, setPairPhone] = useState("")
+  const [pairCode, setPairCode] = useState<string | null>(null)
+  const [pairLoading, setPairLoading] = useState(false)
+
+  async function handleRequestPairCode() {
+    const phone = pairPhone.replace(/[^0-9]/g, "")
+    if (!phone) return
+    setPairLoading(true)
+    try {
+      const res = await requestPairingCode({ data: { sessionId, phone } })
+      setPairCode(res.code)
+    } catch (err: any) {
+      toast.error(err?.message ?? "Couldn't get a pairing code.")
+    } finally {
+      setPairLoading(false)
+    }
+  }
 
   const { data, error } = useQuery({
     queryKey: ["session-status", sessionId],
@@ -91,6 +110,9 @@ export function QrConnectDialog({
     setStep("options")
     setSyncHistory(true)
     setSyncGroupMembers(false)
+    setShowPair(false)
+    setPairCode(null)
+    setPairPhone("")
     // Drop the cached status too: useQuery hands back cached data even
     // while disabled, so a stale "connected" from a previous run would
     // trip the auto-close effect below the moment the dialog reopens.
@@ -356,6 +378,40 @@ export function QrConnectDialog({
                   <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
                 </span>
                 Waiting for scan…
+              </div>
+              <div className="w-full border-t pt-4">
+                {!showPair ? (
+                  <Button variant="outline" size="sm" onClick={() => setShowPair(true)}>
+                    QR terus gagal? Pakai kode 8 digit
+                  </Button>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs text-muted-foreground">
+                      Jalur ini berbeda dari QR. Masukkan nomor HP (angka saja,
+                      pakai kode negara, misal 62812…), minta kode, lalu di HP:
+                      WhatsApp → Linked Devices → Link with phone number →
+                      ketik kode ini.
+                    </p>
+                    <Input
+                      value={pairPhone}
+                      onChange={(e) => setPairPhone(e.target.value)}
+                      placeholder="62812xxxxxxxxx"
+                      inputMode="numeric"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleRequestPairCode}
+                      disabled={pairLoading || !pairPhone.replace(/[^0-9]/g, "")}
+                    >
+                      {pairLoading ? "Meminta kode…" : "Minta kode pairing"}
+                    </Button>
+                    {pairCode && (
+                      <p className="text-center text-2xl font-bold tracking-[0.3em]">
+                        {pairCode}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           ) : (

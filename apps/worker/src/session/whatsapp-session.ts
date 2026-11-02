@@ -2379,7 +2379,13 @@ export class WhatsAppSession implements DurableObject {
         } as any,
         keepAliveIntervalMs: 30_000,
         qrTimeout: 60_000,
-        connectTimeoutMs: 20_000,
+        // 60s, not 20s: the wa-tools engine (Baileys 6, local Node) pairs
+        // the same main number reliably with 60s. On Workers the pairing
+        // handshake is slower, and a 20s timeout drops the socket while the
+        // phone still shows "Masuk...", which the phone then reports as
+        // "check your connection". A longer timeout only delays a genuine
+        // failure; it cannot turn a success into one.
+        connectTimeoutMs: 60_000,
         transactionOpts: { maxCommitRetries: 3, delayBetweenTriesMs: 2000 },
         getMessage: async () => undefined,
       });
