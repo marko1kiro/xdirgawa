@@ -357,3 +357,40 @@ describe("generateImage", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("generateImage size and quality", () => {
+  it("passes an allowlisted size and quality through, nothing else", async () => {
+    const { fetch, calls } = mockFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ b64_json: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64") }] }),
+    }));
+    const res = await generateImage(config(), "a red apple", {
+      fetchImpl: fetch,
+      retryDelayMs: 0,
+      size: "1024x1792",
+      quality: "hd",
+    });
+    expect(res.status).toBe("ok");
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      model: "mock-image-model",
+      prompt: "a red apple",
+      response_format: "b64_json",
+      size: "1024x1792",
+      quality: "hd",
+    });
+  });
+
+  it("omits size and quality when not given (provider default)", async () => {
+    const { fetch, calls } = mockFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ b64_json: Buffer.from([0x89, 0x50]).toString("base64") }] }),
+    }));
+    await generateImage(config(), "a red apple", { fetchImpl: fetch, retryDelayMs: 0 });
+    const body = JSON.parse(calls[0].init.body as string);
+    expect(body.size).toBeUndefined();
+    expect(body.quality).toBeUndefined();
+  });
+});

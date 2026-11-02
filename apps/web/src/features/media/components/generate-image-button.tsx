@@ -9,6 +9,13 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@workspace/ui/components/sheet"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@workspace/ui/components/select"
 import { Textarea } from "@workspace/ui/components/textarea"
 import { ImageIcon, Loader2Icon } from "lucide-react"
 import { toast } from "sonner"
@@ -34,6 +41,8 @@ export function GenerateImageButton({
 }) {
   const [open, setOpen] = useState(false)
   const [prompt, setPrompt] = useState("")
+  const [size, setSize] = useState("1024x1024")
+  const [quality, setQuality] = useState("default")
   const [generating, setGenerating] = useState(false)
 
   async function handleGenerate() {
@@ -41,7 +50,13 @@ export function GenerateImageButton({
     if (!clean) return
     setGenerating(true)
     try {
-      const res = await serverGenerateImage({ data: { prompt: clean } })
+      const res = await serverGenerateImage({
+        data: {
+          prompt: clean,
+          size,
+          quality: quality === "default" ? undefined : quality,
+        },
+      })
       onGenerated({
         mediaKey: res.mediaKey,
         mediaMime: res.mediaMime,
@@ -87,6 +102,39 @@ export function GenerateImageButton({
           />
           <p className="text-xs text-muted-foreground">
             {prompt.trim().length} / 1000 characters. Text-to-image only.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium">Size</span>
+              <Select value={size} onValueChange={(v) => setSize(v ?? "1024x1024")}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1024x1024">Square 1024 × 1024</SelectItem>
+                  <SelectItem value="1024x1792">Portrait 1024 × 1792</SelectItem>
+                  <SelectItem value="1792x1024">Landscape 1792 × 1024</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium">Quality</span>
+              <Select value={quality} onValueChange={(v) => setQuality(v ?? "default")}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Default</SelectItem>
+                  <SelectItem value="standard">Standard</SelectItem>
+                  <SelectItem value="hd">HD</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Size sets the aspect, not exact pixels: portrait comes back
+            around 768 × 1376, landscape around 1376 × 768, square 1024 ×
+            1024.
           </p>
         </div>
         <SheetFooter>

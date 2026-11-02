@@ -338,19 +338,42 @@ function base64ToBytes(b64: string): Uint8Array | null {
   }
 }
 
+export const IMAGE_SIZES = ["1024x1024", "1024x1792", "1792x1024"] as const;
+export type ImageSize = (typeof IMAGE_SIZES)[number];
+export const IMAGE_QUALITIES = ["standard", "hd"] as const;
+export type ImageQuality = (typeof IMAGE_QUALITIES)[number];
+
+export function isImageSize(value: unknown): value is ImageSize {
+  return typeof value === "string" && (IMAGE_SIZES as readonly string[]).includes(value);
+}
+
+export function isImageQuality(value: unknown): value is ImageQuality {
+  return typeof value === "string" && (IMAGE_QUALITIES as readonly string[]).includes(value);
+}
+
 /**
  * One text-to-image generation through the user's gateway, using ONLY
- * GATEWAY_IMAGE_MODEL (never the chat model). The request body contains
- * only model + prompt (+ response_format); per the 9Router image skill,
- * Gemini-class models ignore size/n, so v1 sends neither. A url response
- * is fetched back (never returned to the client as a third-party link);
- * the bytes are stored in R2 by the caller, so the gallery — not the
- * gateway — is the delivery surface. Same retry/fail-closed rules as chat.
+ * GATEWAY_IMAGE_MODEL (never the chat model). Size and quality are
+ * allowlisted and verified live 2026-11-02 for ag/gemini-3.1-flash-image:
+ * size is honored as aspect, not exact pixels (1024x1792 requested
+ * returns 768x1376, 1792x1024 returns 1376x768, square returns 1024x1024),
+ * and quality standard/hd are both accepted. The 9Router skill's
+ * "Gemini ignores size" note does NOT hold for this ag provider variant,
+ * so do not re-apply it here. A url response is fetched back (never
+ * returned to the client as a third-party link); the bytes are stored in
+ * R2 by the caller, so the gallery — not the gateway — is the delivery
+ * surface. Same retry/fail-closed rules as chat.
  */
 export async function generateImage(
   config: GatewayProviderConfig,
   prompt: string,
-  options?: { fetchImpl?: GatewayFetch; bytesFetch?: GatewayBytesFetch; retryDelayMs?: number },
+  options?: {
+    fetchImpl?: GatewayFetch;
+    bytesFetch?: GatewayBytesFetch;
+    retryDelayMs?: number;
+    size?: ImageSize;
+    quality?: ImageQuality;
+  },
 ): Promise<GenerateImageResult> {
   if (config.provider !== "gateway") return { status: "failed", reason: "gateway_disabled" };
   if (!config.imageModel) return { status: "failed", reason: "gateway_image_model_missing" };
@@ -366,7 +389,13 @@ export async function generateImage(
       return { ok: res.ok, status: res.status, arrayBuffer: () => res.arrayBuffer() };
     });
   const retryDelayMs = options?.retryDelayMs ?? 500;
-  const body = { model: config.imageModel, prompt: cleanPrompt, response_format: "b64_json" };
+  const body: Record<string, string> = {
+    model: config.imageModel,
+    prompt: cleanPrompt,
+    response_format: "b64_json",
+  };
+  if (options?.size) body.size = options.size;
+  if (options?.quality) body.quality = options.quality;
 
   for (let attempt = 0; attempt <= 1; attempt++) {
     const controller = new AbortController();

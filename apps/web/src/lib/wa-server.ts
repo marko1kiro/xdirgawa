@@ -144,7 +144,7 @@ export const serverUploadMedia = createServerFn({ method: "POST" })
   })
 
 export const serverGenerateImage = createServerFn({ method: "POST" })
-  .validator((data: { prompt: string }) => data)
+  .validator((data: { prompt: string; size?: string; quality?: string }) => data)
   .handler(async ({ data }) => {
     const workspaceId = await requireWorkspace("send_messages")
     return readEngineJson<{
@@ -156,7 +156,7 @@ export const serverGenerateImage = createServerFn({ method: "POST" })
     }>("/media/generate-image", workspaceId, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspaceId, prompt: data.prompt }),
+      body: JSON.stringify({ workspaceId, prompt: data.prompt, size: data.size, quality: data.quality }),
     })
   })
 

@@ -6,7 +6,13 @@ import {
 } from "./broadcast";
 import type {BroadcastQueueMessage} from "./broadcast";
 import { storeLibraryMedia } from "./media";
-import { generateImage, isGatewayEnabledForWorkspace, resolveGatewayConfig } from "./ai-agent/gateway-provider";
+import {
+  generateImage,
+  isGatewayEnabledForWorkspace,
+  isImageQuality,
+  isImageSize,
+  resolveGatewayConfig,
+} from "./ai-agent/gateway-provider";
 import { pruneWebhookDeliveries } from "./automation";
 import { handleAgentMessage } from "./ai-agent/agent";
 import { loadAgentConfig, invalidateConfigCache } from "./ai-agent/config";
@@ -409,14 +415,27 @@ async function route(request: Request, env: Env): Promise<Response> {
   // image only leaves XdirgaWA when the user picks it for a message,
   // template or broadcast through the normal manual send paths.
   if (request.method === "POST" && url.pathname === "/media/generate-image") {
-    const body = readJson<{ workspaceId?: unknown; prompt?: unknown }>(await request.clone().json());
+    const body = readJson<{
+      workspaceId?: unknown;
+      prompt?: unknown;
+      size?: unknown;
+      quality?: unknown;
+    }>(await request.clone().json());
     const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+    const size = isImageSize(body.size) ? body.size : undefined;
+    const quality = isImageQuality(body.quality) ? body.quality : undefined;
     if (!workspaceId) return Response.json({ ok: false, error: "Missing 'workspaceId'" }, { status: 400 });
     const scopeError = assertCallerWorkspace(caller, workspaceId);
     if (scopeError) return scopeError;
     if (!prompt || prompt.length > 1000) {
       return Response.json({ ok: false, error: "Prompt must be 1-1000 characters." }, { status: 400 });
+    }
+    if (body.size !== undefined && !size) {
+      return Response.json({ ok: false, error: "Invalid size." }, { status: 400 });
+    }
+    if (body.quality !== undefined && !quality) {
+      return Response.json({ ok: false, error: "Invalid quality." }, { status: 400 });
     }
     const resolved = resolveGatewayConfig(env);
     if (!resolved.ok) {
@@ -429,7 +448,7 @@ async function route(request: Request, env: Env): Promise<Response> {
       );
     }
     try {
-      const result = await generateImage(resolved.config, prompt);
+      const result = await generateImage(resolved.config, prompt, { size, quality });
       if (result.status !== "ok") {
         const message =
           result.reason === "gateway_auth_failed"
