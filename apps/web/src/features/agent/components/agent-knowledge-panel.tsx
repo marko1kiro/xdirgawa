@@ -119,7 +119,6 @@ export function AgentKnowledgePanel({ workspaceId }: { workspaceId: string }) {
   })
 
   const docs = kbQuery.data ?? []
-  const canIngest = !!source.trim() && !!text.trim() && text.length <= MAX_DOC_CHARS
 
   return (
     <div className="flex flex-col gap-4">
@@ -132,6 +131,13 @@ export function AgentKnowledgePanel({ workspaceId }: { workspaceId: string }) {
           <p className="text-sm text-muted-foreground">
             Documents your agent can answer from. The agent only ever answers
             from this content — anything else gets handed to a human.
+          </p>
+          <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+            Knowledge base ingestion is disabled in XdirgaWA v1 (RAG off, by
+            design — the agent currently answers only from recent conversation
+            context). The Ingest button below is disabled so it cannot fail
+            with a generic error again. Re-enabling ingestion is a separate
+            decision, not a bug fix.
           </p>
         </div>
 
@@ -200,13 +206,11 @@ export function AgentKnowledgePanel({ workspaceId }: { workspaceId: string }) {
                     docId: docId.trim() || undefined,
                   })
                 }
-                disabled={!canIngest || ingestMutation.isPending}
+                disabled
+                title="Knowledge base ingestion is disabled in XdirgaWA v1 (RAG off)"
               >
-                {ingestMutation.isPending && (
-                  <Loader2Icon className="animate-spin" />
-                )}
                 <PlusIcon />
-                Ingest document
+                Ingest disabled in v1
               </Button>
             </div>
           </div>
@@ -224,8 +228,8 @@ export function AgentKnowledgePanel({ workspaceId }: { workspaceId: string }) {
               </EmptyMedia>
               <EmptyTitle>No documents yet</EmptyTitle>
               <EmptyDescription>
-                Ingest your policies and FAQs above so the agent can answer
-                from them.
+                Document ingestion is disabled in XdirgaWA v1 (RAG off), so
+                no documents can be added yet.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
