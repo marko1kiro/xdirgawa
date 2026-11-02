@@ -6,6 +6,7 @@ import {
 } from "./broadcast";
 import type {BroadcastQueueMessage} from "./broadcast";
 import { storeLibraryMedia } from "./media";
+import { generateImage, isGatewayEnabledForWorkspace, resolveGatewayConfig } from "./ai-agent/gateway-provider";
 import { pruneWebhookDeliveries } from "./automation";
 import { handleAgentMessage } from "./ai-agent/agent";
 import { loadAgentConfig, invalidateConfigCache } from "./ai-agent/config";
@@ -68,7 +69,9 @@ export interface Env {
   AI_PROVIDER?: string;
   GATEWAY_BASE_URL?: string;
   GATEWAY_MODEL?: string;
+  GATEWAY_IMAGE_MODEL?: string;
   GATEWAY_API_KEY?: string;
+  AI_IMAGE_TIMEOUT_MS?: string;
   AI_CHAT_TIMEOUT_MS?: string;
   AI_MAX_CONTEXT_MESSAGES?: string;
   AI_ENABLED_WORKSPACES?: string;
@@ -393,6 +396,56 @@ async function route(request: Request, env: Env): Promise<Response> {
       captureError(err, { module: "media-upload" });
       return Response.json(
         { ok: false, error: publicMessage(err, 'Upload failed. Please try again.') },
+        { status: publicStatus(err, 500) }
+      );
+    }
+  }
+
+  // ── POST /media/generate-image -- text-to-image, review-only ──
+  // Generates ONE image through the user's gateway (GATEWAY_IMAGE_MODEL
+  // only, never the chat model) and stores the bytes in R2 as a library
+  // asset, exactly like /media/upload. Nothing is sent to WhatsApp here:
+  // the web UI catalogs the returned key via createMediaAsset, and the
+  // image only leaves XdirgaWA when the user picks it for a message,
+  // template or broadcast through the normal manual send paths.
+  if (request.method === "POST" && url.pathname === "/media/generate-image") {
+    const body = readJson<{ workspaceId?: unknown; prompt?: unknown }>(await request.clone().json());
+    const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
+    const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+    if (!workspaceId) return Response.json({ ok: false, error: "Missing 'workspaceId'" }, { status: 400 });
+    const scopeError = assertCallerWorkspace(caller, workspaceId);
+    if (scopeError) return scopeError;
+    if (!prompt || prompt.length > 1000) {
+      return Response.json({ ok: false, error: "Prompt must be 1-1000 characters." }, { status: 400 });
+    }
+    const resolved = resolveGatewayConfig(env);
+    if (!resolved.ok) {
+      return Response.json({ ok: false, error: "Image generation is not configured." }, { status: 503 });
+    }
+    if (!isGatewayEnabledForWorkspace(resolved.config, workspaceId)) {
+      return Response.json(
+        { ok: false, error: "Image generation is not enabled for this workspace." },
+        { status: 403 },
+      );
+    }
+    try {
+      const result = await generateImage(resolved.config, prompt);
+      if (result.status !== "ok") {
+        const message =
+          result.reason === "gateway_auth_failed"
+            ? "Gateway key or quota problem. Check the worker secret, then try again."
+            : "Image generation failed. Please try again.";
+        return Response.json({ ok: false, error: message }, { status: 502 });
+      }
+      if (result.bytes.length > MAX_MEDIA_UPLOAD_BYTES) {
+        return Response.json({ ok: false, error: "Generated image is too large." }, { status: 413 });
+      }
+      const stored = await storeLibraryMedia(env, workspaceId, result.bytes.buffer as ArrayBuffer, result.mime);
+      return Response.json({ ok: true, ...stored, fileSizeBytes: result.bytes.length });
+    } catch (err: any) {
+      captureError(err, { module: "media-generate-image" });
+      return Response.json(
+        { ok: false, error: publicMessage(err, 'Image generation failed. Please try again.') },
         { status: publicStatus(err, 500) }
       );
     }

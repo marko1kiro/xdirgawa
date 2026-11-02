@@ -25,7 +25,11 @@
     "AI_PROVIDER": "off",
     "GATEWAY_BASE_URL": "https://your-gateway.example/v1",
     "GATEWAY_MODEL": "your-chat-model",
+    // Text-to-image only (never the chat model). Set to the real image
+    // model at deploy time; GATEWAY_API_KEY is the same Worker secret.
+    "GATEWAY_IMAGE_MODEL": "your-image-model",
     "AI_CHAT_TIMEOUT_MS": "30000",
+    "AI_IMAGE_TIMEOUT_MS": "120000",
     "AI_MAX_CONTEXT_MESSAGES": "20",
     "AI_ENABLED_WORKSPACES": "",
     // Legacy Cloudflare AI Gateway id. Unused by the v1 AI path (which

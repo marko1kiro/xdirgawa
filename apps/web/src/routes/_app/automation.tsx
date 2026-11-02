@@ -48,6 +48,7 @@ import {
 } from "@/features/media/hooks/use-media-assets"
 import { GalleryGrid } from "@/features/media/components/gallery-grid"
 import { UploadAssetButton } from "@/features/media/components/upload-asset-button"
+import { GenerateImageButton } from "@/features/media/components/generate-image-button"
 import { AgentSection } from "@/features/agent/components/agent-tab"
 import { AutomationNav  } from "@/components/automation-nav"
 import type {AutomationView} from "@/components/automation-nav";
@@ -253,7 +254,10 @@ function AutomationPage() {
                     pick from here instead of re-uploading.
                   </p>
                 </div>
-                <UploadAssetButton onUploaded={handleUploaded} />
+                <div className="flex gap-2">
+                  <GenerateImageButton onGenerated={handleUploaded} />
+                  <UploadAssetButton onUploaded={handleUploaded} />
+                </div>
               </div>
               <Panel className="p-3">
                 {assetsQuery.isLoading ? (

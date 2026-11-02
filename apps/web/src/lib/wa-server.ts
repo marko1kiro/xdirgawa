@@ -143,6 +143,23 @@ export const serverUploadMedia = createServerFn({ method: "POST" })
     }>("/media/upload", workspaceId, { method: "POST", body: form })
   })
 
+export const serverGenerateImage = createServerFn({ method: "POST" })
+  .validator((data: { prompt: string }) => data)
+  .handler(async ({ data }) => {
+    const workspaceId = await requireWorkspace("send_messages")
+    return readEngineJson<{
+      ok: boolean
+      mediaKey: string
+      mediaMime: string
+      mediaType: "image" | "video" | "audio" | "document"
+      fileSizeBytes: number
+    }>("/media/generate-image", workspaceId, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspaceId, prompt: data.prompt }),
+    })
+  })
+
 export const serverReact = createServerFn({ method: "POST" })
   .validator(
     (data: {

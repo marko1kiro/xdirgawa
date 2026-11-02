@@ -29,8 +29,12 @@ export interface GatewayProviderConfig {
   provider: GatewayProviderName;
   baseUrl: string;
   model: string;
+  /** Text-to-image model only. Never falls back to the chat model. */
+  imageModel: string;
   apiKey: string;
   timeoutMs: number;
+  /** Image generation takes longer than chat; default 120s, capped 120s. */
+  imageTimeoutMs: number;
   maxContextMessages: number;
   enabledWorkspaces: string[];
 }
@@ -79,8 +83,10 @@ export function resolveGatewayConfig(env: {
   AI_PROVIDER?: string;
   GATEWAY_BASE_URL?: string;
   GATEWAY_MODEL?: string;
+  GATEWAY_IMAGE_MODEL?: string;
   GATEWAY_API_KEY?: string;
   AI_CHAT_TIMEOUT_MS?: string;
+  AI_IMAGE_TIMEOUT_MS?: string;
   AI_MAX_CONTEXT_MESSAGES?: string;
   AI_ENABLED_WORKSPACES?: string;
 }): GatewayConfigResult {
@@ -88,6 +94,10 @@ export function resolveGatewayConfig(env: {
   const timeoutMs = Math.min(
     120_000,
     Math.max(1_000, parsePositiveInt(env.AI_CHAT_TIMEOUT_MS, DEFAULT_GATEWAY_TIMEOUT_MS)),
+  );
+  const imageTimeoutMs = Math.min(
+    120_000,
+    Math.max(1_000, parsePositiveInt(env.AI_IMAGE_TIMEOUT_MS, 120_000)),
   );
   const maxContextMessages = Math.min(
     20,
@@ -105,8 +115,10 @@ export function resolveGatewayConfig(env: {
         provider: "off",
         baseUrl: "",
         model: "",
+        imageModel: "",
         apiKey: "",
         timeoutMs,
+        imageTimeoutMs,
         maxContextMessages,
         enabledWorkspaces,
       },
@@ -143,7 +155,17 @@ export function resolveGatewayConfig(env: {
 
   return {
     ok: true,
-    config: { provider: "gateway", baseUrl, model, apiKey, timeoutMs, maxContextMessages, enabledWorkspaces },
+    config: {
+      provider: "gateway",
+      baseUrl,
+      model,
+      imageModel: (env.GATEWAY_IMAGE_MODEL ?? "").trim(),
+      apiKey,
+      timeoutMs,
+      imageTimeoutMs,
+      maxContextMessages,
+      enabledWorkspaces,
+    },
   };
 }
 
@@ -262,6 +284,155 @@ export async function generateChat(
     } catch (err) {
       const retryable = isAbortError(err) || err instanceof Error;
       // Network / timeout errors are retryable once; a second failure is final.
+      if (retryable && attempt === 0) {
+        await delay(retryDelayMs);
+        continue;
+      }
+      if (isAbortError(err)) return { status: "failed", reason: "gateway_timeout" };
+      return { status: "failed", reason: "gateway_network_error" };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+  return { status: "failed", reason: "gateway_network_error" };
+}
+
+export const MAX_IMAGE_PROMPT_CHARS = 1000;
+
+export type GenerateImageResult =
+  | { status: "ok"; bytes: Uint8Array; mime: string }
+  | { status: "failed"; reason: string };
+
+export type GatewayBytesFetch = (
+  url: string,
+) => Promise<{ ok: boolean; status: number; arrayBuffer: () => Promise<ArrayBuffer> }>;
+
+export function gatewayImageEndpoint(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/images/generations`;
+}
+
+function mimeFromMagic(bytes: Uint8Array): string {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+  )
+    return "image/png";
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  )
+    return "image/webp";
+  return "image/png";
+}
+
+function base64ToBytes(b64: string): Uint8Array | null {
+  try {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One text-to-image generation through the user's gateway, using ONLY
+ * GATEWAY_IMAGE_MODEL (never the chat model). The request body contains
+ * only model + prompt (+ response_format); per the 9Router image skill,
+ * Gemini-class models ignore size/n, so v1 sends neither. A url response
+ * is fetched back (never returned to the client as a third-party link);
+ * the bytes are stored in R2 by the caller, so the gallery — not the
+ * gateway — is the delivery surface. Same retry/fail-closed rules as chat.
+ */
+export async function generateImage(
+  config: GatewayProviderConfig,
+  prompt: string,
+  options?: { fetchImpl?: GatewayFetch; bytesFetch?: GatewayBytesFetch; retryDelayMs?: number },
+): Promise<GenerateImageResult> {
+  if (config.provider !== "gateway") return { status: "failed", reason: "gateway_disabled" };
+  if (!config.imageModel) return { status: "failed", reason: "gateway_image_model_missing" };
+  const cleanPrompt = prompt.trim();
+  if (!cleanPrompt || cleanPrompt.length > MAX_IMAGE_PROMPT_CHARS) {
+    return { status: "failed", reason: "gateway_invalid_prompt" };
+  }
+  const fetchFn: GatewayFetch = options?.fetchImpl ?? fetch;
+  const bytesFetch: GatewayBytesFetch =
+    options?.bytesFetch ??
+    (async (url: string) => {
+      const res = await fetch(url);
+      return { ok: res.ok, status: res.status, arrayBuffer: () => res.arrayBuffer() };
+    });
+  const retryDelayMs = options?.retryDelayMs ?? 500;
+  const body = { model: config.imageModel, prompt: cleanPrompt, response_format: "b64_json" };
+
+  for (let attempt = 0; attempt <= 1; attempt++) {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        try {
+          controller.abort();
+        } catch {
+          // best-effort; the race below still times out.
+        }
+        const timeoutError = new Error("gateway timeout");
+        timeoutError.name = "TimeoutError";
+        reject(timeoutError);
+      }, config.imageTimeoutMs);
+    });
+    try {
+      const response = await Promise.race([
+        fetchFn(gatewayImageEndpoint(config.baseUrl), {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${config.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        }),
+        timeoutPromise,
+      ]);
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          return { status: "failed", reason: "gateway_auth_failed" };
+        }
+        if (response.status >= 400 && response.status < 500) {
+          return { status: "failed", reason: "gateway_http_4xx" };
+        }
+        if (response.status >= 500 && attempt === 0) {
+          await delay(retryDelayMs);
+          continue;
+        }
+        return { status: "failed", reason: "gateway_http_5xx" };
+      }
+      let parsed: unknown;
+      try {
+        parsed = await response.json();
+      } catch {
+        return { status: "failed", reason: "gateway_invalid_response" };
+      }
+      const item = (parsed as { data?: Array<{ b64_json?: unknown; url?: unknown }> }).data?.[0];
+      if (!item) return { status: "failed", reason: "gateway_invalid_response" };
+      if (typeof item.b64_json === "string" && item.b64_json) {
+        const bytes = base64ToBytes(item.b64_json);
+        if (!bytes || bytes.length === 0) return { status: "failed", reason: "gateway_invalid_response" };
+        return { status: "ok", bytes, mime: mimeFromMagic(bytes) };
+      }
+      if (typeof item.url === "string" && item.url) {
+        const fetched = await bytesFetch(item.url);
+        if (!fetched.ok) return { status: "failed", reason: "gateway_invalid_response" };
+        const buffer = await fetched.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        if (bytes.length === 0) return { status: "failed", reason: "gateway_invalid_response" };
+        return { status: "ok", bytes, mime: mimeFromMagic(bytes) };
+      }
+      return { status: "failed", reason: "gateway_invalid_response" };
+    } catch (err) {
+      const retryable = isAbortError(err) || err instanceof Error;
       if (retryable && attempt === 0) {
         await delay(retryDelayMs);
         continue;

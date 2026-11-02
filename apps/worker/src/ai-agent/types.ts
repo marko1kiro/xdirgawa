@@ -13,8 +13,10 @@ export interface AgentEnv {
   AI_PROVIDER?: string;
   GATEWAY_BASE_URL?: string;
   GATEWAY_MODEL?: string;
+  GATEWAY_IMAGE_MODEL?: string;
   GATEWAY_API_KEY?: string;
   AI_CHAT_TIMEOUT_MS?: string;
+  AI_IMAGE_TIMEOUT_MS?: string;
   AI_MAX_CONTEXT_MESSAGES?: string;
   AI_ENABLED_WORKSPACES?: string;
   /**

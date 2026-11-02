@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { generateChat, isGatewayEnabledForWorkspace, resolveGatewayConfig } from "../gateway-provider";
+import { generateChat, generateImage, isGatewayEnabledForWorkspace, resolveGatewayConfig } from "../gateway-provider";
 import type { GatewayFetch, GatewayProviderConfig } from "../gateway-provider";
 import { buildSystemPrompt } from "../system-prompt";
 import { classifyIntent } from "../guardrails";
@@ -15,8 +15,10 @@ function config(overrides: Partial<GatewayProviderConfig> = {}): GatewayProvider
     provider: "gateway",
     baseUrl: "https://gateway.example/v1",
     model: "mock-model",
+    imageModel: "mock-image-model",
     apiKey: MOCK_KEY,
     timeoutMs: 1000,
+    imageTimeoutMs: 1000,
     maxContextMessages: 20,
     enabledWorkspaces: ["ws-1"],
     ...overrides,
@@ -310,5 +312,48 @@ describe("AI path is off (source guard)", () => {
     expect(src).not.toContain("maybeAiAutoReply");
     const sendCount = (src.match(/sendMessage\(/g) ?? []).length;
     expect(sendCount).toBe(1);
+  });
+});
+
+describe("generateImage", () => {
+  it("sends only model + prompt + b64_json, decodes JPEG by magic bytes", async () => {
+    const { fetch, calls } = mockFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ b64_json: Buffer.from([0xff, 0xd8, 0xff, 0x00]).toString("base64") }] }),
+    }));
+    const res = await generateImage(config(), "a red apple", { fetchImpl: fetch, retryDelayMs: 0 });
+    expect(res.status).toBe("ok");
+    if (res.status === "ok") {
+      expect(res.mime).toBe("image/jpeg");
+      expect(res.bytes[0]).toBe(0xff);
+    }
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://gateway.example/v1/images/generations");
+    const body = JSON.parse(calls[0].init.body as string);
+    expect(body).toEqual({ model: "mock-image-model", prompt: "a red apple", response_format: "b64_json" });
+    expect(body.size).toBeUndefined();
+    expect(body.n).toBeUndefined();
+  });
+
+  it("never falls back to the chat model when the image model is missing", async () => {
+    const { fetch, calls } = mockFetch(async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) }));
+    const res = await generateImage(config({ imageModel: "" }), "a red apple", { fetchImpl: fetch });
+    expect(res).toEqual({ status: "failed", reason: "gateway_image_model_missing" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects an empty or over-long prompt without calling the gateway", async () => {
+    const { fetch, calls } = mockFetch(async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) }));
+    expect(await generateImage(config(), "  ", { fetchImpl: fetch })).toEqual({ status: "failed", reason: "gateway_invalid_prompt" });
+    expect(await generateImage(config(), "x".repeat(1001), { fetchImpl: fetch })).toEqual({ status: "failed", reason: "gateway_invalid_prompt" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does not retry a 401 and never returns a url-only failure as bytes", async () => {
+    const { fetch, calls } = mockFetch(async () => ({ ok: false, status: 401, json: async () => ({}) }));
+    const res = await generateImage(config(), "a red apple", { fetchImpl: fetch });
+    expect(res).toEqual({ status: "failed", reason: "gateway_auth_failed" });
+    expect(calls).toHaveLength(1);
   });
 });
