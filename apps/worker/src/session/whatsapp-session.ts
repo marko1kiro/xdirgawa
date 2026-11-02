@@ -2332,28 +2332,28 @@ export class WhatsAppSession implements DurableObject {
       }
 
       this.log("info", "Calling makeWASocket()...");
-      // History import wants requireFullSync (set from syncFullHistory in
-      // Baileys' registration node). WhatsApp rejects a *fresh* registration
-      // that also claims the Desktop web platform (webSubPlatform DARWIN):
-      // it closes the socket with "Connection Terminated" (code 428) before
-      // any pair-device IQ / QR is issued — the UI then sits on "Preparing
-      // your connection…" and finally "Connection failed". Pairing must use
-      // Chrome (WEB_BROWSER). After creds.me exists, login may use Desktop
-      // for a richer full-history profile. syncFullHistory still follows the
-      // user's history toggle on first registration so requireFullSync is
-      // recorded on the companion device when they asked for history.
+      // NEVER use the Desktop profile. The old comment claimed login may
+      // use Desktop after creds.me exists for a richer history profile.
+      // PROVEN WRONG 2026-11-02 (live, twice): after a successful QR pair
+      // (creds.me = 6283826748958, normal 515 restart), every reconnect
+      // with wantHistory=true + Desktop was terminated by WhatsApp with
+      // code 428 "Connection Terminated", 4 times in a row, and the
+      // session never reached "connected" — even though the phone had
+      // already paired. The wa-tools engine, which pairs this same number
+      // reliably, never uses Desktop either (Browsers.windows, WEB_BROWSER).
+      // So the profile is always Chrome (WEB_BROWSER) here, paired or not.
+      // syncFullHistory still follows the user's history toggle.
       const wantHistory = !this.skipHistorySync;
       const hasPaired = !!authState.creds.me;
-      const useDesktopProfile = wantHistory && hasPaired;
       this.log(
         "info",
-        `socket profile: hasPaired=${hasPaired} wantHistory=${wantHistory} useDesktopProfile=${useDesktopProfile}`
+        `socket profile: hasPaired=${hasPaired} wantHistory=${wantHistory} useDesktopProfile=false`
       );
       this.socket = makeWASocket({
         auth: authState,
         version: waVersion,
         printQRInTerminal: false,
-        browser: useDesktopProfile ? Browsers.macOS("Desktop") : Browsers.macOS("Chrome"),
+        browser: Browsers.macOS("Chrome"),
         syncFullHistory: wantHistory,
         // Default Baileys filter rejects FULL history; when the user asked
         // to import history, accept every sync type including FULL. Must not
