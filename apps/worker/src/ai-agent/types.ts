@@ -2,10 +2,21 @@
 // bindings it actually touches (structural subset of the worker's Env), so
 // it never imports from ../index and there's no import cycle.
 export interface AgentEnv {
-  AI: Ai;
+  // XdirgaWA v1: Workers AI and Vectorize are OFF on the AI path. These
+  // bindings are optional legacy fields only; the v1 agent never reads
+  // them. They stay optional so older Env shapes still typecheck.
+  AI?: Ai;
   DB: D1Database;
-  AGENT_VECTORIZE: VectorizeIndex; // wa-docs: grounding vectors for the agent
-  REPLY_CACHE: KVNamespace; // cheap answer + short-lived config cache
+  AGENT_VECTORIZE?: VectorizeIndex; // wa-docs: grounding vectors for the agent (v1: unused)
+  REPLY_CACHE: KVNamespace; // short-lived config cache + rate-limit counters (v1: NOT an answer cache)
+  /** XdirgaWA v1 gateway config (Worker vars; key is a Worker secret). */
+  AI_PROVIDER?: string;
+  GATEWAY_BASE_URL?: string;
+  GATEWAY_MODEL?: string;
+  GATEWAY_API_KEY?: string;
+  AI_CHAT_TIMEOUT_MS?: string;
+  AI_MAX_CONTEXT_MESSAGES?: string;
+  AI_ENABLED_WORKSPACES?: string;
   /**
    * AI Gateway id to route model calls through (defaults to the account's
    * auto-provisioned "default" gateway when unset).
@@ -98,6 +109,13 @@ export interface AgentReply {
   blocked: boolean;
   blockReason?: IntentLabel;
   cached: boolean;
+  /**
+   * XdirgaWA v1: every agent output is a draft for human review, never a
+   * message to send. Callers must NOT pass `text` to a send path.
+   */
+  isDraft: boolean;
+  /** Generic handoff reason when text is a handoff notice, not a draft answer. */
+  handoffReason?: string;
 }
 
 export interface AgentInput {

@@ -6,18 +6,13 @@ import {
 } from "./broadcast";
 import type {BroadcastQueueMessage} from "./broadcast";
 import { storeLibraryMedia } from "./media";
-import { indexMessagesForSearch, semanticSearch } from "./search";
 import { pruneWebhookDeliveries } from "./automation";
 import { handleAgentMessage } from "./ai-agent/agent";
 import { loadAgentConfig, invalidateConfigCache } from "./ai-agent/config";
-import { ingestDocument } from "./ai-agent/rag";
 import { listWorkspaceWebhookTools } from "./ai-agent/tools";
 import { resolveCaller, assertCallerWorkspace, unauthorized, forbidden, assertSafeOutboundUrlWithDns, MAX_MEDIA_UPLOAD_BYTES, MAX_SEND_MEDIA_BYTES  } from "./security";
 import {
-  SearchBodySchema,
-  ReindexBodySchema,
   AgentReplyBodySchema,
-  AgentIngestBodySchema,
   AgentConfigBodySchema,
   AgentToolBodySchema,
 } from "./validation";
@@ -64,9 +59,19 @@ export interface Env {
   DB: D1Database;
   MEDIA: R2Bucket;
   BROADCAST_QUEUE: Queue<BroadcastQueueMessage>;
-  AI: Ai;
-  VECTORIZE: VectorizeIndex;
-  AGENT_VECTORIZE: VectorizeIndex;
+  // XdirgaWA v1: Workers AI and Vectorize are OFF on the AI path. These
+  // bindings are optional legacy fields only; nothing in v1 reads them.
+  AI?: Ai;
+  VECTORIZE?: VectorizeIndex;
+  AGENT_VECTORIZE?: VectorizeIndex;
+  /** XdirgaWA v1 gateway config. GATEWAY_API_KEY is a Worker secret only. */
+  AI_PROVIDER?: string;
+  GATEWAY_BASE_URL?: string;
+  GATEWAY_MODEL?: string;
+  GATEWAY_API_KEY?: string;
+  AI_CHAT_TIMEOUT_MS?: string;
+  AI_MAX_CONTEXT_MESSAGES?: string;
+  AI_ENABLED_WORKSPACES?: string;
   REPLY_CACHE: KVNamespace;
   API_RATE_LIMITER: RateLimit;
   AUTH_RATE_LIMITER: RateLimit;
@@ -424,84 +429,22 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/search") {
-    try {
-      const parsed = SearchBodySchema.safeParse(await request.json());
-      if (!parsed.success) {
-        return Response.json({ ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
-      }
-      const { workspaceId, query, topK } = parsed.data;
-      const scopeError = assertCallerWorkspace(caller, workspaceId);
-      if (scopeError) return scopeError;
-      const matches = await semanticSearch(env, workspaceId, query, topK);
-      return Response.json({ ok: true, matches });
-    } catch (err: any) {
-      captureError(err, { module: "search" });
-      return Response.json(
-        { ok: false, error: publicMessage(err, 'Search is unavailable right now. Please try again.') },
-        { status: publicStatus(err, 500) }
-      );
-    }
+    // XdirgaWA v1: semantic search is disabled (RAG off). This is a
+    // deliberate disabled response, not a silent empty result, so the
+    // web UI surfaces it as an error instead of pretending no match
+    // was found.
+    return Response.json(
+      { ok: false, error: "Semantic search is disabled in XdirgaWA v1 (RAG off)" },
+      { status: 503 },
+    );
   }
 
   if (request.method === "POST" && url.pathname === "/search/reindex") {
-    try {
-      const parsed = ReindexBodySchema.safeParse(await request.json());
-      if (!parsed.success) {
-        return Response.json({ ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
-      }
-      const { workspaceId, limit, offset, cursor } = parsed.data;
-      const scopeError = assertCallerWorkspace(caller, workspaceId);
-      if (scopeError) return scopeError;
-      const db = createDb(env.DB);
-      // Keyset on messages_workspace_wa_message_idx (workspace_id,
-      // wa_message_id) when a cursor is given; offset kept for old callers.
-      const base = db
-        .select({
-          waMessageId: messages.waMessageId,
-          waSessionId: waSessions.id,
-          conversationId: messages.conversationId,
-          body: messages.body,
-        })
-        .from(messages)
-        .innerJoin(conversations, eq(messages.conversationId, conversations.id))
-        .innerJoin(waSessions, eq(conversations.waSessionId, waSessions.id))
-        .where(
-          and(
-            eq(messages.workspaceId, workspaceId),
-            sql`${messages.body} is not null`,
-            cursor ? sql`${messages.waMessageId} > ${cursor}` : undefined,
-          ),
-        )
-        .orderBy(messages.waMessageId)
-        .limit(limit);
-      const rows = await (cursor ? base : base.offset(offset)).all();
-
-      // Embed in batches of 50: one AI call + one Vectorize upsert each.
-      let indexed = 0;
-      const items = rows
-        .filter((r) => r.body && r.waMessageId)
-        .map((r) => ({ messageId: r.waMessageId!, waSessionId: r.waSessionId, conversationId: r.conversationId, text: r.body! }));
-      for (let i = 0; i < items.length; i += 50) {
-        const res = await indexMessagesForSearch(env, workspaceId, items.slice(i, i + 50));
-        indexed += res.indexed;
-      }
-      const last = rows.at(-1)?.waMessageId ?? null;
-      return Response.json({
-        ok: true,
-        scanned: rows.length,
-        indexed,
-        limit,
-        offset,
-        nextOffset: offset + rows.length,
-        nextCursor: rows.length === limit ? last : null,
-      });
-    } catch (err: any) {
-      captureError(err, { module: "search-reindex" });
-      return Response.json(
-        { ok: false, error: publicMessage(err, 'Reindexing failed. Please try again.') },
-        { status: publicStatus(err, 500) }
-      );
-    }
+    // XdirgaWA v1: semantic reindexing is disabled (RAG off).
+    return Response.json(
+      { ok: false, error: "Semantic reindexing is disabled in XdirgaWA v1 (RAG off)" },
+      { status: 503 },
+    );
   }
 
   // ── AI agent integration surface ──
@@ -534,24 +477,11 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/agent/ingest") {
-    try {
-      const parsed = AgentIngestBodySchema.safeParse(await request.json());
-      if (!parsed.success) {
-        return Response.json({ ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
-      }
-      const { workspaceId, source, text, docId, chunkSize } = parsed.data;
-      const scopeError = assertCallerWorkspace(caller, workspaceId);
-      if (scopeError) return scopeError;
-      const config = await loadAgentConfig(env, workspaceId);
-      const result = await ingestDocument(env, config, { source, text, docId, chunkSize });
-      return Response.json({ ok: true, ...result });
-    } catch (err: any) {
-      captureError(err, { module: "agent-ingest" });
-      return Response.json(
-        { ok: false, error: publicMessage(err, "Couldn't ingest that document. Please try again.") },
-        { status: publicStatus(err, 500) }
-      );
-    }
+    // XdirgaWA v1: RAG document ingestion is disabled.
+    return Response.json(
+      { ok: false, error: "Knowledge base ingestion is disabled in XdirgaWA v1 (RAG off)" },
+      { status: 503 },
+    );
   }
 
   if (url.pathname === "/agent/config") {

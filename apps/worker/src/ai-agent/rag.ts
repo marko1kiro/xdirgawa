@@ -1,119 +1,31 @@
-import { createDb, inArray, eq, and, docChunks } from "@workspace/db";
+// XdirgaWA v1: RAG is OFF. This module no longer embeds, queries, or
+// upserts Vectorize, and no longer calls Workers AI.
+//
+// - retrieveContext() always returns []: the v1 agent grounds only on the
+//   same conversation's recent messages (see agent.ts), never on docs.
+// - ingestDocument() is disabled: doc upload is a v2 decision. Old
+//   doc_chunks rows and old Vectorize indexes are left untouched (not
+//   deleted) — only their *use* is off.
+// - chunkText() stays as a pure helper (tested, no model calls), so a
+//   future v2 can reuse it without resurrecting the v1-disabled path.
 import type { AgentConfig, AgentEnv, RetrievedChunk } from "./types";
-import { gatewayRunOptions } from "./gateway";
 
-async function embed(env: AgentEnv, model: string, texts: string[], workspaceId: string): Promise<number[][]> {
-  const result: any = await env.AI.run(
-    model,
-    { text: texts },
-    gatewayRunOptions(env, workspaceId, "embedding"),
-  );
-  const data = result?.data;
-  if (!Array.isArray(data)) throw new Error("Embedding model returned no data");
-  return data as number[][];
-}
-
-/**
- * Retrieves the top matching chunks for a workspace, filtered by the
- * similarity threshold so low-confidence matches never reach the model as
- * "context" — the main anti-hallucination lever alongside the system prompt.
- * Returns [] when nothing clears the bar; callers must treat that as "I
- * don't have this information", never as a cue to free-wheeling.
- */
+/** v1: RAG retrieval is disabled. Always no grounding chunks. */
 export async function retrieveContext(
-  env: AgentEnv,
-  config: AgentConfig,
-  query: string,
+  _env: AgentEnv,
+  _config: AgentConfig,
+  _query: string,
 ): Promise<RetrievedChunk[]> {
-  const [embedding] = await embed(env, config.models.embedding, [query], config.workspaceId);
-
-  const matches = await env.AGENT_VECTORIZE.query(embedding, {
-    topK: config.maxContextChunks,
-    filter: { workspaceId: config.workspaceId },
-    returnMetadata: true,
-  });
-
-  const above = matches.matches.filter((m) => m.score >= config.similarityThreshold);
-  if (above.length === 0) return [];
-
-  const ids = above.map((m) => m.id);
-  const db = createDb(env.DB);
-  const rows = await db
-    .select({ id: docChunks.id, text: docChunks.text, source: docChunks.source })
-    .from(docChunks)
-    .where(and(eq(docChunks.workspaceId, config.workspaceId), inArray(docChunks.id, ids)))
-    .all();
-
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  return above
-    .map((m) => {
-      const row = byId.get(m.id);
-      if (!row) return null; // vector in index but row gone (deleted) — skip
-      return { id: row.id, text: row.text, source: row.source, score: m.score };
-    })
-    .filter((c): c is RetrievedChunk => c !== null);
+  return [];
 }
 
-/**
- * Ingests a document into the agent's grounding store: chunk -> embed ->
- * upsert into Vectorize + D1. Called from an admin/ingestion endpoint when
- * docs change, not per message. Passing `docId` replaces any previous
- * chunks with the same docId first, so re-ingesting a source never leaves
- * stale grounding around.
- */
+/** v1: RAG document ingestion is disabled. */
 export async function ingestDocument(
-  env: AgentEnv,
-  config: AgentConfig,
-  params: { source: string; text: string; docId?: string; chunkSize?: number },
+  _env: AgentEnv,
+  _config: AgentConfig,
+  _params: { source: string; text: string; docId?: string; chunkSize?: number },
 ): Promise<{ chunks: number; deleted?: number }> {
-  const chunkSize = params.chunkSize ?? 800;
-  const chunks = chunkText(params.text, chunkSize);
-  if (chunks.length === 0) return { chunks: 0 };
-
-  const db = createDb(env.DB);
-  let deleted = 0;
-  if (params.docId) {
-    const olds = await db
-      .select({ id: docChunks.id })
-      .from(docChunks)
-      .where(and(eq(docChunks.workspaceId, config.workspaceId), eq(docChunks.docId, params.docId)))
-      .all();
-    if (olds.length > 0) {
-      const oldIds = olds.map((o) => o.id);
-      // Best-effort vector cleanup first (index may lag a delete, D1 is source of truth).
-      await env.AGENT_VECTORIZE.deleteByIds(oldIds).catch(() => {});
-      await db.delete(docChunks).where(inArray(docChunks.id, oldIds));
-      deleted = oldIds.length;
-    }
-  }
-
-  const vectors = await embed(env, config.models.embedding, chunks, config.workspaceId);
-  const inserts = chunks.map((text, i) => {
-    const id = crypto.randomUUID();
-    return { id, text, vector: vectors[i] };
-  });
-
-  // D1 batch needs a non-empty tuple; chunks is guaranteed non-empty here.
-  const statements = inserts.map((c) =>
-    db.insert(docChunks).values({
-      id: c.id,
-      workspaceId: config.workspaceId,
-      docId: params.docId ?? null,
-      source: params.source,
-      text: c.text,
-    }),
-  );
-  await db.batch(statements as unknown as [(typeof statements)[number], ...(typeof statements)[number][]]);
-
-  await env.AGENT_VECTORIZE.upsert(
-    inserts.map((c) => ({
-      id: c.id,
-      values: c.vector,
-      metadata: { workspaceId: config.workspaceId, docId: params.docId ?? "" },
-    })),
-  );
-
-  return { chunks: inserts.length, deleted };
+  throw new Error("RAG document ingestion is disabled in XdirgaWA v1");
 }
 
 /**
@@ -125,7 +37,7 @@ export async function ingestDocument(
  */
 export function chunkText(text: string, size = 800): string[] {
   const cleaned = text.replace(/\r\n/g, "\n").trim();
-  if (!cleaned) return [];
+  if (cleaned === "") return [];
 
   const paragraphs = cleaned.split(/\n\s*\n/).filter((p) => p.trim());
   const chunks: string[] = [];

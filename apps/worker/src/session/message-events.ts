@@ -11,7 +11,7 @@ import { parseBaileysMessage, syncIncomingMessage, syncMessagesBatch, isContactB
 import type {ParsedMessage} from "../db/sync";
 import { downloadAndStoreMedia } from "../media";
 import { findAutoReply, dispatchWebhookEvent } from "../automation";
-import { maybeAiAutoReply } from "../ai-autoreply";
+import { maybeAiDraft } from "../ai-autoreply";
 import { indexMessageForSearch } from "../search";
 import { TtlCache } from "../ttl-cache";
 
@@ -187,8 +187,8 @@ export async function processLiveMessage(
   }
 
   // Auto-reply: keyword rules first (deterministic, cheap), then the AI
-  // agent as a fallback when no rule matched. Only for genuinely fresh
-  // messages -- see AUTO_REPLY_MAX_AGE_MS above.
+  // agent as a DRAFT fallback when no rule matched (v1: never auto-sent).
+  // Only for genuinely fresh messages -- see AUTO_REPLY_MAX_AGE_MS above.
   const isFresh = upsertType === "notify" || Date.now() - parsed.timestampMs < AUTO_REPLY_MAX_AGE_MS;
   if (!parsed.fromMe && ctx.socket && parsed.body && isFresh) {
     try {
@@ -199,24 +199,11 @@ export async function processLiveMessage(
         body: parsed.body,
         senderJid,
       });
-      let source = "Keyword auto-reply";
-      if (!replyText) {
-        replyText = await maybeAiAutoReply(ctx.env, {
-          waSessionId: ctx.sessionIdName,
-          workspaceId: ctx.workspaceId,
-          conversationId,
-          remoteJid: parsed.remoteJid,
-          senderJid,
-          isGroup,
-          body: parsed.body,
-        });
-        source = "AI auto-reply";
-      }
       if (replyText && ctx.allowAutoReply && !ctx.allowAutoReply(parsed.remoteJid)) {
         replyText = null; // loop breaker / pace: skip this auto-reply
       }
       if (replyText) {
-        ctx.log("info", `${source} firing for ${parsed.remoteJid}`);
+        ctx.log("info", `Keyword auto-reply firing for ${parsed.remoteJid}`);
         const result = await ctx.socket.sendMessage(parsed.remoteJid, {
           text: replyText,
         });
@@ -230,6 +217,22 @@ export async function processLiveMessage(
             timestampMs: Date.now(),
           };
           await syncIncomingMessage(ctx.db, ctx.workspaceId, ctx.sessionIdName, autoReplyParsed);
+        }
+      } else {
+        // XdirgaWA v1: no keyword rule matched, so the AI path runs as a
+        // DRAFT only. maybeAiDraft records a pending human escalation;
+        // it is never sent here, and no AI text reaches sendMessage.
+        const draft = await maybeAiDraft(ctx.env, {
+          waSessionId: ctx.sessionIdName,
+          workspaceId: ctx.workspaceId,
+          conversationId,
+          remoteJid: parsed.remoteJid,
+          senderJid,
+          isGroup,
+          body: parsed.body,
+        });
+        if (draft) {
+          ctx.log("info", `AI draft queued for human review for ${parsed.remoteJid}`);
         }
       }
     } catch (err: any) {

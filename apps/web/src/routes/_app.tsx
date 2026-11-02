@@ -44,7 +44,7 @@ function AppLayout() {
     [...matches]
       .reverse()
       .find((m) => (m.staticData as { title?: string } | undefined)?.title)
-      ?.staticData?.title ?? "Replyloom"
+      ?.staticData?.title ?? "XdirgaWA"
   /* eslint-enable @typescript-eslint/no-unnecessary-condition */
 
   return (

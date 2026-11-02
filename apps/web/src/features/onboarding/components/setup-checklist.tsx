@@ -129,7 +129,7 @@ export function SetupChecklist() {
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-foreground">
-            Get started with Replyloom
+            Get started with XdirgaWA
           </h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {loading

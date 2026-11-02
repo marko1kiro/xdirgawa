@@ -1,6 +1,7 @@
 import type { AgentConfig, AgentEnv, GuardrailResult, IntentLabel } from "./types";
 import { buildClassifierPrompt } from "./system-prompt";
-import { gatewayRunOptions } from "./gateway";
+import { generateChat, isGatewayEnabledForWorkspace, resolveGatewayConfig } from "./gateway-provider";
+import type { GatewayFetch } from "./gateway-provider";
 
 // Exact canned responses for refused intents. The CODING wording is a hard
 // product requirement — the agent is a support assistant and must never
@@ -24,39 +25,47 @@ export function isHardBlockedIntent(label: IntentLabel | string): boolean {
 }
 
 /**
- * Fast, cheap gate that runs BEFORE any retrieval or generation. Uses a
- * small model so this costs a fraction of a full reply and keeps latency
- * low. Falls back to keyword rules if the model call fails, so a classifier
- * outage never opens the gate wide.
+ * Fast gate that runs BEFORE any generation. XdirgaWA v1: the classifier
+ * runs through the user's gateway (same adapter as generation), never
+ * through Workers AI. If the gateway is off, unavailable, or fails, it
+ * falls back to keyword rules only, so a classifier outage never opens
+ * the gate wide — and the final output is draft-only in v1 anyway.
  */
 export async function classifyIntent(
   env: AgentEnv,
   config: AgentConfig,
   message: string,
+  fetchImpl?: GatewayFetch,
 ): Promise<GuardrailResult> {
   const keywordLabel = keywordPrecheck(message);
   if (keywordLabel) return toResult(keywordLabel, config.businessName);
 
-  try {
-    const result: any = await env.AI.run(
-      config.models.classifier,
-      {
-        messages: [{ role: "user", content: buildClassifierPrompt(config, message) }],
-        max_tokens: 5,
-      },
-      gatewayRunOptions(env, config.workspaceId, "classifier"),
-    );
-    const raw = String(result?.response ?? "").trim().toUpperCase();
-    // Default open on an ambiguous parse — the RAG grounding + strict system
-    // prompt are the real backstop for anything that slips past here.
-    const label = (["SUPPORT", "CODING", "SENSITIVE", "OFF_TOPIC"] as IntentLabel[]).find((l) =>
-      raw.startsWith(l),
-    );
-    return toResult(label ?? "SUPPORT", config.businessName);
-  } catch {
-    // Classifier down — be conservative but don't hard-block support traffic.
+  const resolved = resolveGatewayConfig(env);
+  if (!resolved.ok || !isGatewayEnabledForWorkspace(resolved.config, config.workspaceId)) {
     return { allowed: true, label: "SUPPORT" };
   }
+  const result = await generateChat(
+    resolved.config,
+    {
+      // The classifier prompt is self-contained: it asks for one label and
+      // nothing else, so history is empty by design here.
+      systemPrompt: "Reply with only one label, no punctuation, no explanation.",
+      history: [],
+      message: buildClassifierPrompt(config, message),
+    },
+    { fetchImpl },
+  );
+  if (result.status !== "ok") {
+    return { allowed: true, label: "SUPPORT" };
+  }
+  const raw = result.text.trim().toUpperCase();
+  // Default open on an ambiguous parse — the strict system prompt and
+  // draft-only handling are the real backstop for anything that slips
+  // past here.
+  const label = (["SUPPORT", "CODING", "SENSITIVE", "OFF_TOPIC"] as IntentLabel[]).find((l) =>
+    raw.startsWith(l),
+  );
+  return toResult(label ?? "SUPPORT", config.businessName);
 }
 
 /**

@@ -5,7 +5,7 @@
 // the CLOUDFLARE_ACCOUNT_ID env var.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "whatsapp-ai-web",
+  "name": "xdirgawa-web",
   "compatibility_date": "2026-10-19",
   "compatibility_flags": ["nodejs_compat"],
   "main": "src/server.ts",
@@ -13,9 +13,8 @@
     "enabled": true
   },
   "services": [
-    // Keep the worker service local during development. The worker's
-    // Vectorize bindings are configured as remote below in its own config.
-    { "binding": "WA_WORKER", "service": "wa-cf-poc" }
+    // Keep the worker service local during development.
+    { "binding": "WA_WORKER", "service": "xdirgawa" }
   ],
   // Same physical D1 database as apps/worker — keep both ids in sync.
   // D1 is "remote" (not the default local sqlite emulation) so apps/web and

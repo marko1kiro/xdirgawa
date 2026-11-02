@@ -23,7 +23,7 @@ export function PageSkeleton() {
     >
       <AppSidebar user={user} variant="inset" />
       <SidebarInset>
-        <SiteHeader title="Replyloom" />
+        <SiteHeader title="XdirgaWA" />
         <div className="flex min-h-0 flex-1 flex-col bg-primary/10">
           <div className="@container/main flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto p-3 sm:p-4 md:gap-6 md:p-6">
             <div className="flex flex-1 flex-col gap-4 animate-pulse">

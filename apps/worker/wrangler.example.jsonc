@@ -5,7 +5,7 @@
 // the CLOUDFLARE_ACCOUNT_ID env var.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "wa-cf-poc",
+  "name": "xdirgawa",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-19",
   "compatibility_flags": ["nodejs_compat"],
@@ -16,9 +16,21 @@
     "ws": "./src/compat/ws-shim.ts"
   },
   "vars": {
-    // AI Gateway id for every model call (classifier, generator, embeddings).
-    // Leave as "default" to use the account's auto-provisioned gateway; set a
-    // named gateway once you create one in the dashboard.
+    // XdirgaWA v1 AI: chat goes through the user's own OpenAI-compatible
+    // gateway, never through Workers AI. AI_PROVIDER is "gateway" or
+    // "off" (default "off" = kill-switch, zero gateway calls).
+    // Set GATEWAY_BASE_URL / GATEWAY_MODEL to the real values at deploy
+    // time (do not commit a personal domain here); GATEWAY_API_KEY is
+    // a Worker secret ONLY: `wrangler secret put GATEWAY_API_KEY`.
+    "AI_PROVIDER": "off",
+    "GATEWAY_BASE_URL": "https://your-gateway.example/v1",
+    "GATEWAY_MODEL": "your-chat-model",
+    "AI_CHAT_TIMEOUT_MS": "30000",
+    "AI_MAX_CONTEXT_MESSAGES": "20",
+    "AI_ENABLED_WORKSPACES": "",
+    // Legacy Cloudflare AI Gateway id. Unused by the v1 AI path (which
+    // never calls Workers AI); kept only for any non-AI caller that
+    // still references it.
     "AIG_GATEWAY_ID": "default",
     // CORS origin(s): comma-separated browser origins allowed to call this worker
     // cross-origin (apps/web, incl. its WebSocket upgrade). Defaults to "*"
@@ -73,23 +85,12 @@
   "triggers": {
     "crons": ["*/5 * * * *"]
   },
-  // Semantic search over message history: bge-m3 embeddings (Workers AI)
-  // upserted into a Vectorize index as each message is synced. Create the
-  // index once with:
-  //   wrangler vectorize create wa-messages --dimensions=1024 --metric=cosine
-  "ai": {
-    "binding": "AI"
-  },
-  "vectorize": [
-    { "binding": "VECTORIZE", "index_name": "wa-messages", "remote": true },
-    // AI agent grounding (RAG): doc chunks embedded with bge-m3 (1024-dim,
-    // cosine) and filtered per workspace. Create once with:
-    //   wrangler vectorize create wa-docs --dimensions=1024 --metric=cosine
-    { "binding": "AGENT_VECTORIZE", "index_name": "wa-docs", "remote": true }
-  ],
-  // Cheap per-message cache for the AI agent: exact-match FAQ answers (so
-  // repeated questions cost ~0 tokens) and a short-lived copy of each
-  // workspace's agent config. Create once with:
+  // XdirgaWA v1: Workers AI and Vectorize are OFF. There is deliberately
+  // no "ai" binding and no "vectorize" binding here: the AI path never
+  // calls them, and semantic search / RAG ingestion are disabled in the
+  // worker. Old indexes, if any exist, are left untouched, not deleted.
+  // Short-lived copy of each workspace's agent config + agent rate-limit
+  // counters (v1: NOT an answer cache). Create once with:
   //   wrangler kv namespace create REPLY_CACHE
   // then paste the returned id below (pnpm setup does this for you).
   "kv_namespaces": [

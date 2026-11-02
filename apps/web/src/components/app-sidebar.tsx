@@ -53,7 +53,7 @@ export function AppSidebar({
     // main-content look that goes with it.
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <WorkspaceSwitcher fallbackName="Replyloom" />
+        <WorkspaceSwitcher fallbackName="XdirgaWA" />
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />

@@ -103,14 +103,12 @@ else
 fi
 
 # ── Vectorize indexes (semantic search + agent RAG) ──────────────────────
-for INDEX in "$VECTORIZE_INDEX" "$AGENT_VECTORIZE_INDEX"; do
-  echo "==> Vectorize index ($INDEX)..."
-  if wrangler vectorize list 2>/dev/null | grep -q "$INDEX"; then
-    echo "    already exists"
-  else
-    wrangler vectorize create "$INDEX" --dimensions=1024 --metric=cosine
-  fi
-done
+# XdirgaWA v1: SKIPPED on purpose. Semantic search and RAG are disabled
+# in the worker, so creating these indexes would only burn free-tier
+# storage for data nothing reads. Old indexes, if any exist, are left
+# untouched. Re-enabling them is a v2 decision.
+echo "==> Vectorize indexes ($VECTORIZE_INDEX, $AGENT_VECTORIZE_INDEX)..."
+echo "    skipped (XdirgaWA v1: RAG and semantic search are off)"
 
 # ── KV namespace (AI agent reply cache) ──────────────────────────────────
 echo "==> KV namespace ($KV_BINDING)..."

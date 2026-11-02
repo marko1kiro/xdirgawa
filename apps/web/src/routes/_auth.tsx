@@ -24,7 +24,7 @@ function AuthLayout() {
             <MessageCircleIcon className="size-4" />
           </span>
           <span className="text-lg font-bold tracking-tight text-foreground">
-            Replyloom
+            XdirgaWA
           </span>
         </Link>
 

@@ -49,7 +49,7 @@ function LoginPage() {
           Welcome back
         </h1>
         <p className="text-sm text-muted-foreground">
-          Sign in to your Replyloom workspace
+          Sign in to your XdirgaWA workspace
         </p>
       </div>
 

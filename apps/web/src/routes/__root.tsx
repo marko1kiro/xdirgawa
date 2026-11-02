@@ -20,8 +20,8 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Replyloom" },
-      { name: "description", content: "Replyloom: open-source, self-hosted WhatsApp CRM and shared team inbox on Cloudflare." },
+      { title: "XdirgaWA" },
+      { name: "description", content: "XdirgaWA: self-hosted WhatsApp CRM and shared team inbox on Cloudflare." },
     ],
     links: [{ rel: "stylesheet", href: appCss }],
   }),

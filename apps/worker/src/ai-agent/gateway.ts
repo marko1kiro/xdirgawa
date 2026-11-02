@@ -1,3 +1,8 @@
+// XdirgaWA v1: LEGACY, NOT USED BY THE AI PATH. This module built the
+// options for Workers AI calls, which v1 removed. It is kept (with its
+// test) only as a reference for a possible v2; nothing imports it in v1,
+// and the worker build has no AI binding. Do not re-import it into the
+// AI path without a new spec.
 import type { AgentEnv } from "./types";
 import { ACTIVE_GENERATOR_MODEL } from "./config";
 
