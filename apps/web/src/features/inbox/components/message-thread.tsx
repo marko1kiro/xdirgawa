@@ -168,6 +168,14 @@ export function MessageThread({
   // matching WhatsApp Web's own edit affordance.
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
+  // Which message's action bar is pinned open by tap (touch devices).
+  // The old code forced the bar visible on EVERY message on touch
+  // ([@media(hover:none)]:opacity-100), so on a phone 3+ floating bars
+  // stacked over the thread, covering the message above each bubble and
+  // the day separator. Now only the tapped message shows its bar, and
+  // tapping it again (or another bubble) hides it; desktop hover is
+  // unchanged.
+  const [activeActionsId, setActiveActionsId] = useState<string | null>(null)
   const editMutation = useEditMessage({
     waSessionId: waSessionId ?? null,
     conversationId: conversationId ?? "",
@@ -205,6 +213,7 @@ export function MessageThread({
     initialScrollDone.current = false
     prependHeight.current = null
     nearBottom.current = true
+    setActiveActionsId(null)
   }, [contactName, contactAvatar, kind])
 
   useEffect(() => {
@@ -330,7 +339,19 @@ export function MessageThread({
                 const ghost = msg.type === "sticker" || msg.type === "image"
 
                 return (
-                  <Message key={msg.id} align={isOut ? "end" : "start"}>
+                  <Message
+                    key={msg.id}
+                    align={isOut ? "end" : "start"}
+                    onClick={() => {
+                      // Tap toggles this message's action bar (touch).
+                      // Never toggle while an edit box is open, and never
+                      // toggle a message with no real WhatsApp id.
+                      if (editingMessageId !== null || !msg.waMessageId) return
+                      setActiveActionsId((prev) =>
+                        prev === msg.waMessageId ? null : msg.waMessageId
+                      )
+                    }}
+                  >
                     {!isOut && (
                       <MessageAvatar
                         className={isLastInGroup ? "" : "invisible"}
@@ -473,10 +494,18 @@ export function MessageThread({
                                 falling back to a fake id. */}
                             {waSessionId && workspaceId && toJid && conversationId && msg.waMessageId &&
                               editingMessageId !== msg.waMessageId && (
-                              <div className={cn(
-                                "pointer-events-none absolute bottom-full z-10 flex rounded-lg bg-background/95 opacity-0 shadow-md ring-1 ring-border/50 transition-opacity group-hover/message:pointer-events-auto group-hover/message:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
-                                isOut ? "right-0 justify-end" : "left-0 justify-start"
-                              )}>
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                className={cn(
+                                  "absolute bottom-full z-10 flex rounded-lg bg-background/95 shadow-md ring-1 ring-border/50 transition-opacity group-hover/message:pointer-events-auto group-hover/message:opacity-100",
+                                  // Tap-pinned (touch) OR desktop hover shows
+                                  // it; otherwise it stays hidden. Never the
+                                  // old hover:none always-on behaviour.
+                                  activeActionsId === msg.waMessageId
+                                    ? "pointer-events-auto opacity-100"
+                                    : "pointer-events-none opacity-0",
+                                  isOut ? "right-0 justify-end" : "left-0 justify-start"
+                                )}>
                                 <MessageActions
                                   messageId={msg.waMessageId}
                                   conversationId={conversationId}
